@@ -4,6 +4,6 @@
 
 int main()
 {
-    printf("Your pid = %d, your ppid = %d\n", (int)getpid(), (int)getppid());
+    printf("uid = %d, gid = %d\n", (int)getuid(), (int)getgid());
     return 0;
 }
