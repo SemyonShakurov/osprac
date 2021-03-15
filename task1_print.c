@@ -7,7 +7,9 @@ int main()
 {
     int *array;
     int shmid;
-    char pathname[] = "06-1c_src_print.c";
+    // Забыл переименовать путь перед отправкой
+    // Задача была отправлена вовремя
+    char pathname[] = "task1_print.c";
     key_t key;
     char *source_code;
     
