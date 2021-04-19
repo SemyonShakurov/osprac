@@ -2,23 +2,32 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <errno.h>
 #include <stdio.h>
 #include <sys/sem.h>
 
-int increment(int semid, struct sembuf* buf) {
-    buf->sem_op = 1;
-    buf->sem_flg = 0;
-    buf->sem_num = 0;
+void try_semop(int sem_id, int sem_op) {
+  struct sembuf mybuf;
+  mybuf.sem_num = 0;
+  mybuf.sem_flg = 0;
+  mybuf.sem_op  = sem_op;
 
-    return semop(semid, buf, 1);
+  if (semop(sem_id, &mybuf, 1) < 0) {
+    printf("Can\'t wait for condition\n");
+    exit(-1);
+  }
 }
 
-int decrement(int semid, struct sembuf* buf) {
-    buf->sem_op = -1;
-    buf->sem_flg = 0;
-    buf->sem_num = 0;
+void A(int sem_id, int value) {
+  try_semop(sem_id, value);
+}
 
-    return semop(semid, buf, 1);
+void D(int sem_id, int value) {
+  try_semop(sem_id, -value);
+}
+
+void Z(int sem_id) {
+  try_semop(sem_id, 0);
 }
 
 int main()
@@ -42,14 +51,26 @@ int main()
         exit(-1);
     }
 
-    if ((semid = semget(key, 1, 0666)) < 0) {
-        printf("Семафор не найден, повторяю: \n");
-        if ((semid = semget(key, 1, 0666 | IPC_CREAT)) < 0) {
-            printf("Не могу получить Semid\n");
-            exit(-1);
+    if ((semid = semget(key, 1, 0666|IPC_CREAT|IPC_EXCL)) < 0) {
+        if (errno != EEXIST) {
+        printf("Can\'t create semaphore set\n");
+        exit(-1);
+        } else if ((semid = semget(key, 1, 0)) < 0) {
+        printf("Can\'t find semaphore\n");
+        exit(-1);
         }
-        printf("Успешно создан!\n");
+    } else {
+        A(semid, 2);
     }
+
+    int N;
+    printf("Введите N: \n");
+    scanf("%d", &N);
+    if (N < 2) {
+        printf("N должен быть больше или равен 2.\n");
+        exit(-1);
+    }
+
 
     result = fork();
 
@@ -59,58 +80,48 @@ int main()
     }
 
     else if (result > 0) {
-        int N;
-        printf("Введите N: \n");
-        scanf("%d", &N);
-        if (N < 2) {
-            printf("N должен быть больше или равен 2.\n");
-            exit(-1);
-        }
-
         for (size_t i = 0; i < N; i++)
         {
-            if (write(parent[1], "Hello, world!", 14) != 14) {
-                printf("Can\'t write all string\n\r");
+            D(semid, 1);
+            if (i != 0) {
+                size = read(parent[0], resstring, 14);
+                if (size < 0) {
+                printf("Can\'t read string from pipe\n");
                 exit(-1);
+                }
+                printf("%d. Parent read message:%s\n", i, resstring);
             }
-
-            printf("Пара №%d, Отец отправил рёбенку месседж.\n\r", i + 1);
-
-            increment(semid, &buffer);
-            decrement(semid, &buffer);
-            size = read(parent[0], resstring, 14);
-
+            size = write(parent[1], "Hello, world!", 14);
+            
             if (size != 14) {
-                printf("Can\'t read from child\n\r");
+                printf("Can\'t write all string to pipe\n");
                 exit(-1);
             }
-
-            printf("Отец прочитал с ребёнка: %s\n\r", resstring);
+            D(semid, 1);
         }
         close(parent[0]);
     }
     else {
         int counter = 0;
-        while(1){
-            decrement(semid, &buffer);
+        for (int i = 0; i < N; ++i) {
+            Z(semid);
             size = read(parent[0], resstring, 14);
-
             if (size < 0) {
-                close(parent[1]);
-                close(parent[0]);
-
-                printf("Всё тип топ, все покинули чат-чат\n");
-                return 0;
-            }
-
-            printf("Пара №%d, Ребёнок получил с отца: %s\n\r", ++counter, resstring);
-
-            if (write(parent[1], "Hi, my parent", 14) != 14) {
-                printf("Невозможно написать всю строку.\n");
+                printf("Can\'t read string from pipe\n");
                 exit(-1);
             }
-            increment(semid, &buffer);
+            printf("%d. Child read message:%s\n", ++counter, resstring);
+            size = write(parent[1], "Hello, parent", 14);
+            if (size != 14) {
+                printf("Can\'t write all string to pipe: %d\n", size);
+                exit(-1);
+            }
+
+            A(semid, 2);
         }
+
+        close(parent[1]);
+        close(parent[0]);
     }
     return 0;
 }
